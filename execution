@@ -1,0 +1,573 @@
+function printAST(a) {
+    var sout = ""; // We concat all output to this string and return it.
+
+    // Iterate through the linked list.
+    while (a!=null) {
+
+        switch(a.name) {
+
+            case "outer":
+            if (a.OUTERTEXT!=null)
+                sout += a.OUTERTEXT;
+            else if (a.templateinvocation!=null)
+                sout += printAST(a.templateinvocation);
+            else if (a.templatedef!=null)
+                sout += printAST(a.templatedef);
+            break;
+
+            case "templateinvocation":
+            sout += "{{";
+            if (a.itext!=null) {
+                // An invocation name does not have leading/trailing WS.
+                var tname = printAST(a.itext);
+                // If the name starts with a "{" (because there's a nested invoke, param,
+                // or def), then introduce a space to avoid accidentally converting 
+                // the TSTART "{{" into a PSTART "{{{".
+                if (tname.length>0 && tname.charAt(0)=='{')
+                    sout += " ";
+                sout += tname;
+            }
+            // Append args, if any.
+            if (a.targs!=null)
+                sout += printAST(a.targs);
+            sout += "}}";
+            break;
+
+            case "itext":
+            if (a.INNERTEXT!=null)
+                sout += a.INNERTEXT;
+            else if (a.templateinvocation!=null)
+                sout += printAST(a.templateinvocation);
+            else if (a.templatedef!=null)
+                sout += printAST(a.templatedef);
+            else if (a.tparam!=null)
+                sout += printAST(a.tparam);
+            break;
+
+            case "targs":
+            // Args are prepended by a PIPE.
+            sout += "|";
+            if (a.itext!=null)
+                sout += printAST(a.itext);
+            break;
+
+            case "templatedef":
+            sout += "{:";
+            // Print the definition name, without leading/trailing WS.  
+            // Check before trimming though, as it could be null.
+            if (a.dtext!=null)
+                sout += printAST(a.dtext);
+            sout += printAST(a.dparams);
+            sout += ":}";
+            break;
+
+            case "dtext":
+            if (a.INNERDTEXT!=null)
+                sout += a.INNERDTEXT;
+            else if (a.templateinvocation!=null)
+                sout += printAST(a.templateinvocation);
+            else if (a.templatedef!=null)
+                sout += printAST(a.templatedef);
+            else if (a.tparam!=null)
+                sout += printAST(a.tparam);
+            break;
+
+            case "dparams":
+            // Like targs, individual dparams are separated by a PIPE.
+            sout += "|";
+            if (a.dtext!=null) {
+                sout += printAST(a.dtext);
+            }
+            break;
+
+            case "tparam":
+            // A parameter name itself should not have leading/trailing WS.
+            sout += "{{{" + a.pname.trim() + "}}}";
+            break;
+
+            default: 
+            // We shouldn't need this, but just in case.
+            sout += "ERROR("+a.name+")";
+            break;
+        }
+        a = a.next;
+    }
+    return sout;
+}
+function printASTIndent(node, tabVal){
+    var tabs = "";
+    for(var i = 0; i < tabVal; i++){
+        tabs= tabs.concat("     ");
+    }
+    var result = "";
+    for(var param in node){
+        if (node.hasOwnProperty(param)){
+            var curNode;
+            if(typeof node[param] === 'object' && node[param] !== null){
+                curNode ='\n' + printASTIndent(node[param], tabVal+1);
+                result +=tabs + param +":" + curNode;
+
+            }
+            else{
+
+                if(param=="length"){
+                    continue;
+                }
+                curNode = node[param];
+                result +=tabs + param +":" + curNode + '\n';
+            }
+        }
+    }
+    return result;
+}
+
+function createEnv(par){
+
+	var node= new Object();
+	node.name=Math.random();
+	node.bindings={};
+	node.parent=par;
+	
+	return node;
+}
+
+function lookup(name,env){   //?? is this right?
+
+
+	if (env==null){
+		return null;
+	}
+
+	if(name in env.bindings){
+		
+		return env.bindings[name];
+	
+	}else{
+		return lookup(name, env.parent);
+	}
+
+}
+
+function makeBinding(env){
+
+	var node= new Object();
+	node.params=[];
+	node.body=null; // ??correct structre?
+	node.env=env;
+
+	return node;
+}
+
+function evalWML(node, env){
+
+
+//outertext doesnt matter
+//beside next, there can be only field that is not null
+
+
+// -OUTERTEXT:
+// -templateinvocati
+// -templatedef:
+// next:
+
+
+	if(node==null){ //if we have reached the end 
+		
+		return "";
+	}
+
+	if(node.OUTERTEXT!=null){  //it is something of outertext
+		
+		return node.OUTERTEXT + evalWML(node.next, env);  //?? the parse next 
+	
+	}else if(node.templatedef!=null){
+		
+		var temp=addtoBindings(node.templatedef,env);
+        if(temp!=0){ //there is a closure invovled
+            return temp+evalWML(node.next, env)
+        }
+
+		return evalWML(node.next, env); //?? return is right
+
+	
+	}else if(node.templateinvocation!=null){
+
+		return evalTemplateInvocation(node.templateinvocation, env)+evalWML(node.next, env);
+	
+	}else{
+
+		return evalWML(node.next, env); 
+
+	}
+
+
+}
+
+//Template Definition
+//Packaging up the the body+params 
+function addtoBindings(node, env){   
+
+
+	function evalDownParameters(paramarray,node){
+
+		if(node.next==null){ //current node is the body
+			var result=[];
+			result[0]=paramarray;
+			result[1]=node;
+			return result;
+		
+		}else{ 
+
+			var content=evalDtext(node.dtext);
+
+			paramarray.push(content);
+
+			return evalDownParameters(paramarray,node.next);
+
+		}
+
+
+	}
+
+	var function_name=evalDtext(node.dtext,env)
+
+	var defnode= makeBinding(env);
+	var restofDef= evalDownParameters(defnode.params,node.dparams);
+	//restofDef:[parameters, bodynode]
+	defnode.params=restofDef[0];
+	defnode.body=restofDef[1];
+
+	if(function_name.trim()=="`"){  // AN anonymous DO NOT bind
+		
+        return stringify(defnode);
+
+	}else if(function_name.trim().charAt(0)=="`"){ //
+		env.bindings[function_name.substr(1)]=defnode;
+		
+        return stringify(defnode);
+	
+	}else{
+
+		env.bindings[function_name]=defnode;
+		return 0;
+
+	}
+
+
+} 
+
+function evalDtext(node, env){   
+
+	if(node==null){ //it is just a sinple text 
+		
+		return "";
+	
+	}else if(node.INNERDTEXT!=null){
+
+		return node.INNERDTEXT+ evalDtext(node.next,env);
+	
+	}else if(node.templateinvocation!=null){
+
+		return evalTemplateInvocation(node.templateinvocation, env)+evalDtext(node.next,env);
+	
+	}else if(node.templatedef!=null){
+
+		var temp= addtoBindings(node.templatedef, env)
+		if(temp!=0){ //there is a closure invovled
+			return temp+evalDtext(node.next, env)
+		}
+		return evalDtext(node.next, env); //?? return is right
+
+	}else if(node.tparam!=null){
+
+		return evalTParam(node.tparam,env)+evalDtext(node.next,env);
+
+	}else{
+		return evalDtext(node.next,env);
+	}
+
+
+
+}
+
+
+function evalTParam(node, env){
+
+	return node.pname;
+}
+
+
+//return the string that did the replacement 
+function evalTemplateInvocation(node,env){
+
+// ++++ an Invocation include: 
+// -itext:
+// -targs:n
+
+// ++++++an binding object includes: ++++++
+// -params
+// -body
+// -env
+
+//+++++ an itext contain: 
+// -INNERTEXT
+// -templateinvocation
+// -templatedef
+// -tparam
+// next 
+
+//+++++++ dtext can have : 
+// -INNERDTEXT:
+// -templateinvocation:
+// -templatedef
+// -tparam
+// -next
+
+	var function_name=evalItext(node.itext,env)  
+
+    var defnode;
+    
+    if(unstringify(function_name)!=null){   //We know it is a stringified template definition
+        
+        defnode=unstringify(function_name)
+    }else {
+
+	
+    	if(function_name=="#if"){
+    		
+    		return specialIfFunction(node.targs,env);
+    		
+    	}else if(function_name=="#ifeq"){
+
+    		return specialIfeqFunction(node.targs,env);
+    	
+    	}else if(function_name=="#expr"){
+
+    		var resultstring=SpecialExprFunction(node.targs,env);
+    	
+    		return resultstring;
+    	
+    	}else{   
+    	
+    		defnode=lookup(function_name,env);
+        
+    		if(defnode==null){
+    				return "{{"+function_name+"}}";
+    		}
+    	}
+
+    }
+
+	var parameters=defnode.params
+	var body=defnode.body
+	//an array of arguments 
+
+	var temp=[];
+	//debug("we are going to parse the arguments");
+	var argus=evalTargs(temp,node.targs,env);  
+	
+	//adding the binding between parameters and arguments
+	var newEnvironment=createEnv(defnode.env); 
+ 
+	
+	for(var i=0; i<parameters.length;i++){
+
+		newEnvironment.bindings[parameters[i]]=argus[i];
+		if(argus[i]==null){
+			throw "ERROR! missing arguments for "+ parameters[i] +", in function:"+ function_name+ " But we will try to carry on for now...";
+		}
+
+	}
+	
+	return replaceTemplateDef(body.dtext,newEnvironment);
+
+	
+}
+
+function replaceTemplateDef(node,env){
+
+	if(node==null){ //it is just a sinple text 
+		
+		return "";
+	
+	}else if(node.INNERDTEXT!=null){
+
+		return node.INNERDTEXT+ replaceTemplateDef(node.next,env);
+	
+	}else if(node.templateinvocation!=null){
+
+		return evalTemplateInvocation(node.templateinvocation, env)+replaceTemplateDef(node.next,env);
+	
+	}else if(node.templatedef!=null){
+
+		var temp=addtoBindings(node.templatedef, env)
+		if(temp!=0){ //there is a closure invovled
+			return temp+replaceTemplateDef(node.next, env)
+		}
+		return replaceTemplateDef(node.next, env); //?? return is right
+
+	}else if(node.tparam!=null){
+		
+		var corespond=lookup(node.tparam.pname,env);       
+
+		return corespond+replaceTemplateDef(node.next,env);
+
+	}else{
+
+		return replaceTemplateDef(node.next,env);
+	}
+
+}
+
+function evalTargs(inputarray,node,env){  //only when collecting 
+
+
+//can be itext.next
+	if (node==null){
+		return inputarray;
+	}
+	var input=evalItext(node.itext,env); 
+	inputarray.push(input);
+	return evalTargs(inputarray,node.next,env);
+	
+}
+
+
+//return a string that is the evaluation of itext 
+function evalItext(node,env){
+
+	//+++++ an itext contain: 
+	// -INNERTEXT
+	// -templateinvocation
+	// -templatedef
+	// -tparam
+	// next 
+	//debug("The supposed invocation function name is: "+node.INNERTEXT);
+
+	if(node==null){ //it is just a sinple text 
+		
+		return "";
+	
+	}else if(node.INNERTEXT!=null){
+		
+		return node.INNERTEXT+ evalItext(node.next, env);
+	
+	}else if(node.templateinvocation!=null){
+
+		return evalTemplateInvocation(node.templateinvocation, env)+ evalItext(node.next, env);
+	
+	}else if(node.templatedef!=null){  //add to binding 
+
+		var temp=addtoBindings(node.templatedef ,env)
+		if(temp!=0){ //there is a closure invovled
+			return temp+evalItext(node.next, env)
+		}
+		return evalItext(node.next, env); //?? return is right
+
+	}else if(node.tparam!=null){
+
+		var temp=lookup(node.tparam.pname,env);  //exchange to its corresponding binding
+
+		return temp+evalItext(node.next,env);
+
+
+	}else{
+		
+		return evalItext(node.next,env);
+	}
+
+
+
+}
+//where these funcitons are envoked are insdie of evalTemplateInvocation
+
+function specialIfFunction(node,env){
+	//0:teststring     1: value if not empty     2. value if empty 
+	
+	if(evalItext(node.itext,env)){    //will execute if not ampty
+		//debug("it is not empty")
+		return evalItext(node.next.itext,env)
+	
+	}else{
+		return evalItext(node.next.next.itext,env)
+	}
+
+
+}
+
+function specialIfeqFunction(node,env){
+	//0:teststring     1: value if not empty     2. value if empty 
+	
+	if(evalItext(node.itext,env)==evalItext(node.next.itext,env)){    //will execute if not ampty
+		
+		
+		//debug("EQUAL");
+		
+		return evalItext(node.next.next.itext,env)
+	
+	 }else{
+	 	
+	 //	debug("NOT EQUAL")
+	 	return evalItext(node.next.next.next.itext,env)
+
+	 }
+
+
+}
+
+
+function SpecialExprFunction(node,env){
+
+
+	if (node==null){
+		return "";
+	}
+	var input=evalItext(node.itext,env); 
+
+	var string=input+SpecialExprFunction(node.next,env);
+
+	if(string==""||string==null){
+		return false;
+	}else{
+		return eval(string);
+	}
+
+
+}
+
+
+//ways of writing some of the common arithmetic language in this language
+
+var nummy="{:nummy|n|{{ {{ {{{n}}}|{:`|x|{{#expr|{{{x}}}+1}}:}}}|0}}:}"  //convert a church numeral to a number 
+var isZero="{:isZero|n|{{ {{ {{{n}}}|{:`|x|False:} }}|True}}:}"
+var cn0="{:CN0|f|{:`|x|{{{x}}}:}:}"
+var cn1="{:CN1|f|{:`|x|{{ {{{f}}}|{{{x}}} }} :} :}"
+var plus="{:plus|m|n|{:`|f|{:`|x|{{ {{ {{{m}}}|{{{f}}} }}| {{ {{ {{{n}}}|{{{f}}} }}| {{{x}}} }} }}:}:}:}";
+var suc="{:suc|n|{:`|f|{:`|x|{{ {{{f}}}|{{ {{ {{{n}}}|{{{f}}} }}|{{{x}}} }} }} :} :} :}"
+var maken="{:maken|n|{{#ifeq|{{{n}}}|0|{:`CN0|f|{:`|x|{{{x}}}:}:}|{{suc|{{maken|{{#expr|{{{n}}}-1}} }} }} }}:}"
+var prefix="{:prefix|n| {{#ifeq|{{isZero|{{{n}}} }}|True| {:`|f|{:`|x|{{{x}}}:}:}| {{plus| {{{n}}} | {{prefix| {{ maken|{{#expr|{{nummy|{{{n}}} }}-1}} }} }} }} }} :}"
+
+
+// +++++++++++++++++ TESTING STUFF ++++++++++++++++++++++
+//...Following are test strings for question 2,3,and 4
+//var str="{{ #ifeq | 3 | {:bar|x|{{{x}}} :}{{bar|3}} | {{#if| {{bar|3}} |it is right!|..its okay,keep going!}} |it is basically not the same }}"
+//var str="{:foo|x|{:funcOne|{{{x}}}:}{:funcTwo|x|{{funcOne}}:}{{funcTwo|dynamic}}:}{{foo|static}}" //{:dyntest|{:scope|dynamic:}{{showscope}}:}";
+//var str=" {:times|y|z|{{#expr|{{{z}}}*{{{y}}}}} :} {:square|x|{{times|{{{x}}}|{{{x}}} }}:} {{square|4}}" 
+//var str="{:fact|n|{{#ifeq|{{#expr|{{{n}}}==0}}|true|1|{{#expr|{{{n}}}*{{fact|{{#expr|{{{n}}}-1}}}}}}}}:}{{fact|12}}"
+//var str="{:foo|her:}{:bar|x|{{ {{{x}}} }}:}{{bar|foo}}"
+//var str="{:foo|x|{{ {{{x}}}|correctArg}}:} {{foo|{:`|y|{{{y}}}:} }}"
+//var str="{:Y|x|{{ f{{{x}}}|2}}:}{:foo|x|{{{x}}}:} {{Y|oo}}"
+//var str="{:foo|x|{:funcOne|{{{x}}}:}{:funcTwo|x|{{funcOne}}:}{{funcTwo|dynamic}}:}{{foo|static}}"
+//var str="{:foo|a|{{{a}}}:}{:bar|x|hello,{{foo|{{{x}}} }}:}{{bar|{:sub|a|{{{a}}}:} {{foo|what's up }} {{sub|dude}}}}"
+
+//...Following are tests for question 5
+var test=plus+cn0+cn1+nummy+"{{nummy|{{plus|"+cn0+"|"+cn1+"}} }}";
+var test=nummy+cn1+cn0+plus+suc+maken+prefix+isZero+"{{isZero|{{maken|0}} }}";
+var test=nummy+cn1+cn0+plus+suc+maken+prefix+isZero+"{{nummy|{{prefix|{{maken|0}} }} }}";
+
+
+
+var rootnode=parseOuter(str);  //plus your string into test, parse to nodes 
+var env=createEnv(null);
+var result=evalWML(rootnode,env);
+debug(result);
