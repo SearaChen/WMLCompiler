@@ -1,0 +1,534 @@
+var PSTART= /^(([\s]|[\n])*{{{([\s]|[\n])*)/ ;
+var PEND = /^(([\s]|[\n])*}}}([\s]|[\n])*)/ ;
+var TSTART =/^(([\s]|[\n])*{{([\s]|[\n])*)/ ;
+var TEND = /^(([\s]|[\n])*}}([\s]|[\n])*)/   ;
+var DSTART =/^(([\s]|[\n])*{:([\s]|[\n])*)/ ;
+var DEND = /^(([\s]|[\n])*:}([\s]|[\n])*)/ ;
+var PIPE =/^(([\s]|[\n])*\|([\s]|[\n])*)/ ;
+var OUTERTEXT = /^(([^{]|[\r\n]|({([^{:]|[\r\n])))+)/ ;  
+var INNERTEXT = /^(([^{|}]|[\r\n]|({([^{:]|[\r\n]))|(}([^}]|[\r\n])))+)/ ;//is this right? can I pipe multiple?  !!
+var INNERDTEXT = /^(([^{|:]|[\r\n]|({([^{:]|[\r\n]))|(:([^}]|[\r\n])))+)/ ;   //!!
+var PNAME = /^((([^}|]|[\r\n]|(}([^}]|[\r\n])))|(}}([^}]|[\r\n])))+)/ ;
+
+function scan(s, tokenset){
+	
+	var library =[
+
+		{key: "PSTART", regex: /^(([\s]|[\n])*{{{([\s]|[\n])*)/ }  ,
+		{key: "PEND", regex: /^(([\s]|[\n])*}}}([\s]|[\n])*)/ },
+		{key: "TSTART", regex:/^(([\s]|[\n])*{{([\s]|[\n])*)/ },
+	    {key: "TEND", regex: /^(([\s]|[\n])*}}([\s]|[\n])*)/ } ,
+	    {key: "DSTART", regex:/^(([\s]|[\n])*{:([\s]|[\n])*)/ },
+	    {key: "DEND", regex: /^(([\s]|[\n])*:}([\s]|[\n])*)/ },
+	 	{key: "PIPE", regex:/^(([\s]|[\n])*\|([\s]|[\n])*)/ },
+	    {key: "OUTERTEXT", regex: /^(([^{]|[\r\n]|({([^{:]|[\r\n])))+)/ } ,   //contradict outertext
+	    //screw up if end with single bracket 
+	    //INNERTEXT WORK!!
+	    {key: "INNERTEXT", regex: /^(([^{|}]|[\r\n]|({([^{:]|[\r\n]))|(}([^}]|[\r\n])))+)/ },//is this right? can I pipe multiple?  !!
+		{key: "INNERDTEXT", regex: /^(([^{|:]|[\r\n]|({([^{:]|[\r\n]))|(:([^}]|[\r\n])))+)/ } ,  //!!
+		{key: "PNAME", regex: /^((([^}|]|[\r\n]|(}([^}]|[\r\n])))|(}}([^}]|[\r\n])))+)/ }
+	];
+
+	//the returning result object 
+	var result={
+		tokenname: "",
+		tokenvalue: ""	
+	};
+	
+	var temp; 
+	for(var i=0; i< library.length;i++){  //loop through library 
+
+		
+		for( var obj in tokenset){ if(tokenset.hasOwnProperty(obj)){ //loop through token set 
+
+		
+			if(obj==library[i].key){  //check if entries are in token set 
+	
+				temp=(s.match(library[i].regex));
+				
+				if (temp!= null){
+					if(Boolean(temp[0])){
+				
+						result.tokenname=library[i].key;
+						result.tokenvalue=temp[0];
+
+						return result;   //why is it not returning the thing that I want? 
+					}
+				}
+			}
+
+		}}
+
+	}
+	
+}
+
+var b=0;
+
+
+//++++++++++++++++++PARSE OUTER +++++++++++++++
+function parseOuter(s){
+
+	if(Boolean(s.substr(b))==false){
+		//debug("we are returning now");
+		return null;
+	}
+
+	var node= new Object();
+	node.name="outer";
+	node.OUTERTEXT=null;
+	node.templateinvocation=null;
+	node.templatedef=null;
+	node.next=null;
+
+	var tokenset={
+		TSTART : true,
+	    OUTERTEXT: true, //a string of anything except when encounter./..  is the \n right? !!
+		DSTART: true,
+	};
+
+
+	
+	var nSeg=scan(s.substr(b), tokenset);
+	//debug("we are doing: "+ node.name);
+	//debug("scanned token name:" + nSeg.tokenname);
+	//debug("scanned token value: " + nSeg.tokenvalue);
+
+	if(nSeg==null){  //SQUESTION: when would it be null?
+
+		return null;
+
+	}else if(nSeg.tokenname=="OUTERTEXT"){  //of the next is outertext
+
+		node.OUTERTEXT=""+ nSeg.tokenvalue.trim();
+		b=b+nSeg.tokenvalue.length;
+		node.next=parseOuter(s);
+	
+	}else if(nSeg.tokenname=="TSTART"){
+
+
+		b=b+nSeg.tokenvalue.length;
+		node.templateinvocation=parseTemplateInvocation(s);
+		//debug("passing outer again! yay!");
+		//debug("the leftover string is: " + s.substr(b));
+		node.next=parseOuter(s);
+	
+	}else if(nSeg.tokenname=="DSTART"){
+
+		b=b+nSeg.tokenvalue.length;
+		node.templatedef=parseTemplateDef(s);
+		node.next=parseOuter(s);
+
+	}else{
+		
+		return null;
+	}
+	/*else if(nSeg.tokenname=="TEND"){ //can you parse it in targs?
+		b=b+nSeg.tokenvalue.length;
+		node.next=parseOuter(s);
+	}*/
+	
+
+
+	return node;
+}
+
+//++++++++++++++++++++++Template Invocation+++++++++++++++++++
+
+function parseTemplateInvocation(s){
+	
+
+	if(b>s.length){
+		return null;
+	}
+	var node = new Object();
+	node.name="templateinvocation";
+	//debug(node.name);
+
+	var tokenset ={
+	    TEND: true,
+	};
+
+	node.itext=parseItext(s); 
+	node.targs=parseTargs(s); 
+
+	var nSeg=scan(s.substr(b),tokenset);
+	if(nSeg!=null){
+		if(nSeg.tokenname=="TEND"){
+			b=nSeg.tokenvalue.length+b;
+		}
+	}else{
+		//debug(nSeg==null);
+		//debug("ERROR! THIS IS NOT TEND! We should never get here");
+	}
+
+	return node;
+}
+
+
+
+//+++++++++++++++++++parseItext+++++++++++++++++
+
+function parseItext(s){
+
+
+	if(b>s.length){
+		return node;
+	}
+
+	var node = new Object();
+
+	node.name="itext";
+	node.INNERTEXT=null;
+	node.templateinvocation=null;
+	node.templatedef=null;
+	node.tparam=null;
+	node.next=null;
+
+	var tokenset ={
+		PSTART: true,
+		TSTART : true,
+	    INNERTEXT:true,
+		DSTART: true,
+		PIPE : true  
+	};
+
+	var tokenset_al ={  //an alternate tokenset excludes PSTART
+		TSTART : true,
+	    INNERTEXT:true,
+		DSTART: true,
+		PIPE : true  
+	};
+
+	var memory=b; //memory of where b is before new parse, in case one need to go back 
+	var nSeg=scan(s.substr(b),tokenset);
+
+	//debug("we are doing: "+ node.name);
+	//debug("current string is:" + s.substr(b));
+	//debug("nSeg is null? : "+ (nSeg==null) );
+	
+	if(nSeg==null){
+		//debug("terminal itext");
+		return null;
+
+	}
+	//debug("scanned token is: "+ nSeg.tokenname);
+	//debug("the value of token is:" +nSeg.tokenvalue);
+	
+	if(nSeg.tokenname=="INNERTEXT"){
+
+		node.INNERTEXT=""+nSeg.tokenvalue.trim();
+		b=b+nSeg.tokenvalue.length;
+		node.next=parseItext(s);
+
+	}else if (nSeg.tokenname=="TSTART"){
+
+		b=b+nSeg.tokenvalue.length;
+		node.templateinvocation=parseTemplateInvocation(s);
+		node.next=parseItext(s);
+
+	}else if (nSeg.tokenname=="DSTART"){
+
+		b=b+nSeg.tokenvalue.length;
+		node.templatedef=parseTemplateDef(s);
+		node.next=parseItext(s);
+	
+	}else if(nSeg.tokenname=="PSTART"){
+		
+		b=b+nSeg.tokenvalue.length;
+		//debug("WE are about to parse TPARAM, and the current string is: "+ s.substring(b));
+		node.tparam=parseTParam(s);
+		//debug("value of b is:" + b);
+		//debug("Tparam is done!, and the rest of string is: "+ s.substring(b));
+
+		if(node.tparam=="NMP"){ //later on, there is no PEND
+			node.tparam=null;
+			b=memory;  			//reparse it
+			
+			nSeg=scan(s.substring(b),tokenset_al)
+			if(nSeg.tokenname=="TSTART"){
+				b=b+nSeg.tokenvalue.length;
+				node.templateinvocation=parseTemplateInvocation(s);
+			}else{
+				//debug("ERROR!! Both TSTART and PSTART did not parse correctly!");
+			}
+			
+
+		}else{//do nothing, the parseParam was correct
+		}
+
+		node.next= parseItext(s);
+ 
+	}else if (nSeg.tokenname=="PIPE"){  //if the next thing is also pipe, meaning it is a null node 
+										//is this even needed?
+		 //debug("this is where a pipe is matched");
+		 return null;
+	}
+	
+	
+	return node;
+
+}
+
+function parseTargs(s){
+
+	var node = new Object();
+	node.name="Targs";
+	node.this_pipe=null;
+	node.this_itext=null;
+	node.next=null;
+
+	//debug("we are doing:" +node.name);
+	var pipe_set ={ PIPE: true };
+
+	/*var nSeg=scan(s.substr(b),tokenset);
+
+	//remove the pipe if there is one 
+	if(nSeg!=null){	//SQUESTION: this should always be true! I think?...there is always a pipe
+		b=b+nSeg.tokenvalue.length;
+	}else{
+		return null; //there is no Targs
+	}*/
+
+	var pipe_exist=scan(s.substr(b),pipe_set);
+	
+	if (pipe_exist==null){
+		return null;
+	}else{		//pipe do exist
+
+		node.this_pipe=pipe_exist.tokenvalue.trim();
+		b=b+pipe_exist.tokenvalue.length;   //move on from pipe
+		//debug("the string left going into next parseItext/TARGS is "+ s.substring(b));
+		node.this_itext=parseItext(s);
+		node.next=parseTargs(s);
+
+		return node;
+
+	}
+
+}
+
+
+
+// PLEASE MIMIC THIS TO INVOCATION ONCE YOU GOT IT WORKING!!
+function parseTemplateDef(s){ 
+
+
+	if(b>s.length-1){
+		return null;
+	}
+	
+	var node = new Object();
+	node.name="templatedef";
+	//debug(node.name);
+
+	var tokenset ={ DEND: true, };
+
+	node.dtext_1=parseDtext(s);
+	node.dtext_leftover=parseDtext_leftover(s);
+
+	var nSeg=scan(s.substr(b),tokenset);
+
+	//debug("we are checking the rest which is" + nSeg.tokenvalue);
+	if(nSeg!=null){
+		if(nSeg.tokenname=="DEND"){
+			b=nSeg.tokenvalue.length+b;
+		}	
+	}else{
+		//debug("ERROR! THIS IS NOT TEND! We should never get here");
+	}
+
+	return node;
+}
+
+
+function parseDtext(s){
+
+
+	if(b>s.length-1){
+		return null;
+	}
+
+	var node= new Object();
+
+	node.name="parseDtext";
+	node.INNERDTEXT=null;
+	node.templateinvocation=null;
+	node.templatedef=null;
+	node.tparam=null;
+
+	var tokenset ={
+		PSTART: true,
+		TSTART : true,
+		DSTART: true,
+		INNERDTEXT:true,
+		PIPE: true
+	};
+
+	var tokenset_al ={   //an alternate tokenset excludes PSTART
+		TSTART : true,
+		DSTART: true,
+		INNERDTEXT:true,
+		PIPE: true
+	};
+
+	var memory=b; //memory of where b is before new parse, in case one need to go back 
+	var nSeg=scan(s.substring(b), tokenset);
+
+	//debug("we are doing: "+ node.name);
+	//debug("current string is:" + s.substr(b));
+	//debug("nSeg is null? : "+ (nSeg==null) );
+	
+
+	if(nSeg==null){
+
+		//debug("terminal itext");
+		return null;
+
+	}
+
+	//debug("scanned token is: "+ nSeg.tokenname);
+	//debug("the value of token is:" +nSeg.tokenvalue);
+
+	if (nSeg.tokenname=="INNERDTEXT"){
+
+		node.INNERDTEXT=""+nSeg.tokenvalue.trim();
+		b=b+nSeg.tokenvalue.length;
+		node.next=parseDtext(s);
+
+	}else if(nSeg.tokenname=="TSTART"){
+
+		b=b+nSeg.tokenvalue.length;
+		node.templateinvocation=parseTemplateInvocation(s);
+		node.next=parseDtext(s);
+
+	}else if(nSeg.tokenname=="DSTART"){
+
+		b=b+nSeg.tokenvalue.length;
+		node.templatedef=parseTemplateDef(s);
+		node.next=parseDtext(s);
+
+	}else if (nSeg.tokenname=="PSTART"){
+
+		b=b+nSeg.tokenvalue.length;
+		node.tparam=parseTParam(s);
+
+		if(node.tparam=="NMP"){ //later on, there is no PEND
+			node.tparam=null;
+			b=memory;  			//reparse it
+			
+			nSeg=scan(s.substring(b),tokenset_al)
+			if(nSeg.tokenname=="TSTART"){
+				b=b+nSeg.tokenvalue.length;
+				node.templateinvocation=parseTemplateInvocation(s);
+			}else{
+				//debug("ERROR!! Both TSTART and PSTART did not parse correctly!");
+			}
+			
+
+		}else{//do nothing, the parseParam was correct
+		}
+		node.next=parseDtext(s);
+
+	}else{
+		//debug("This is a matched pipe");
+		return null;
+	
+	}
+
+	return node;
+
+}
+
+function parseDtext_leftover(s){
+	
+	var node = new Object();
+	node.name="dtext_leftover";
+	node.this_pipe=null;
+	node.this_dtext=null;
+	node.next=null;
+
+	//debug("we are doing:" +node.name);
+	var pipe_set ={ PIPE: true };
+
+	/*var nSeg=scan(s.substr(b),tokenset);
+
+	//remove the pipe
+	if(nSeg!=null){	//SQUESTION: this should always be true! I think?...there is always a pipe
+		b=b+nSeg.tokenvalue.length;
+		//debug("after removing the pipe: " +s.substring(b));
+	}else{
+		//debug("NO PIPE befor targs");
+		return null;
+	}*/
+
+	var pipe_exist=scan(s.substring(b),pipe_set);
+
+	if(pipe_exist==null){
+		return null;
+	}else{
+
+		node.this_pipe=pipe_exist.tokenvalue.trim();
+		b=b+pipe_exist.tokenvalue.length;   //move on from pipe
+		//debug("the string left going into next parseItext/TARGS is "+ s.substring(b));
+		node.this_dtext=parseDtext(s);
+		node.next=parseDtext_leftover(s);
+
+		return node;
+	}
+
+}
+
+function parseTParam (s){
+
+
+	if(b>s.length-1){
+		return null;
+	}
+
+	var node = new Object();
+	node.name="Tparam";
+	node.pname=null;
+	//debug("We are doing: " + node.name);
+
+	var tokenset ={
+		PNAME: true
+	};
+
+	var token_ending ={
+		PEND: true
+	};
+
+
+	var nSeg=scan(s.substr(b),tokenset);
+	//debug(node.name);
+	//debug(nSeg.tokenname);
+	//debug(nSeg.tokenvalue);
+
+		
+	if(nSeg.tokenname=="PNAME"){   //filling in the actual PNAME of the node 
+		b=b+nSeg.tokenvalue.length;
+		node.pname=""+nSeg.tokenvalue.trim();
+	}else{   //should i have this here?
+		return null; 
+	}
+
+	nSeg=scan(s.substr(b),token_ending); //c
+	//debug(node.name);
+
+	if(nSeg==null){   //in case that one has {{{ but not }}//.. No Matching Pend
+		
+		//debug("We have found the previous PSTART parsing ambiguity");
+		return "NMP"; 
+	}else{
+
+		b=b+nSeg.tokenvalue.length;  //taking account of PEND
+		//debug(nSeg.tokenname);
+		//debug(nSeg.tokenvalue);
+		//debug("We have scanned the ending: "+ nSeg.tokenvalue + "and we are returning now");
+	////debug("value of b is:"+ b);
+		return node;
+	}
+
+}
+
